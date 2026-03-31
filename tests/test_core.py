@@ -204,6 +204,87 @@ def test_deterministic():
     print("PASS: deterministic")
 
 
+def test_pure_mse_mode():
+    """Pure MSE mode (use_qjl=False): all bits go to MSE, no QJL."""
+    for total_bits in [4, 6]:
+        config = TurboQuantConfig(head_dim=128, total_bits=total_bits, use_qjl=False)
+        assert config.mse_bits == total_bits
+        assert config.qjl_bits == 0
+
+        compressor = TurboQuantCompressor(config)
+        assert compressor.S is None  # No QJL matrix allocated
+
+        x = np.random.default_rng(42).standard_normal(128)
+        compressed = compressor.compress(x)
+
+        # No QJL packed data
+        assert len(compressed.qjl_packed) == 0
+        assert float(compressed.gamma) == 0.0
+
+        # Decompress should work (MSE only)
+        x_hat = compressor.decompress(compressed)
+        assert x_hat.shape == (128,)
+        cos = np.dot(x, x_hat) / (np.linalg.norm(x) * np.linalg.norm(x_hat))
+        assert cos > 0.9, f"Pure MSE {total_bits}-bit cos_sim {cos:.4f} too low"
+
+        # Inner product should work
+        q = np.random.default_rng(99).standard_normal(128)
+        ip = compressor.inner_product(q, compressed)
+        ip_decomp = np.dot(q, x_hat)
+        assert np.isclose(ip, ip_decomp, atol=1e-10), \
+            f"inner_product mismatch: {ip} vs {ip_decomp}"
+
+        print(f"  Pure MSE {total_bits}-bit: cos_sim={cos:.4f}")
+    print("PASS: pure_mse_mode")
+
+
+def test_pure_mse_6bit_matches_tqkv6():
+    """6-bit pure MSE should use 64 centroids (matching ggml TQKV_6)."""
+    config = TurboQuantConfig(head_dim=128, total_bits=6, use_qjl=False)
+    compressor = TurboQuantCompressor(config)
+
+    assert compressor.codebook.num_levels == 64  # 2^6 = 64 centroids
+    assert compressor.codebook.bits == 6
+
+    x = np.random.default_rng(42).standard_normal(128)
+    compressed = compressor.compress(x)
+    x_hat = compressor.decompress(compressed)
+
+    cos = np.dot(x, x_hat) / (np.linalg.norm(x) * np.linalg.norm(x_hat))
+    print(f"  TQKV_6 aligned: 64 centroids, cos_sim={cos:.4f}")
+    assert cos > 0.99, f"6-bit pure MSE cos_sim should be > 0.99, got {cos:.4f}"
+    print("PASS: pure_mse_6bit_matches_tqkv6")
+
+
+def test_qjl_vs_pure_mse_same_total_bits():
+    """At same total_bits, QJL mode should have lower cos_sim than pure MSE
+    (fewer MSE bits), but QJL corrects the residual."""
+    rng = np.random.default_rng(42)
+    x = rng.standard_normal(128)
+
+    # 4-bit with QJL: 3-bit MSE + 1-bit QJL
+    config_qjl = TurboQuantConfig(head_dim=128, total_bits=4, use_qjl=True)
+    comp_qjl = TurboQuantCompressor(config_qjl)
+    x_qjl = comp_qjl.decompress(comp_qjl.compress(x))
+
+    # 4-bit pure MSE: 4-bit MSE, no QJL
+    config_mse = TurboQuantConfig(head_dim=128, total_bits=4, use_qjl=False)
+    comp_mse = TurboQuantCompressor(config_mse)
+    x_mse = comp_mse.decompress(comp_mse.compress(x))
+
+    cos_qjl = np.dot(x, x_qjl) / (np.linalg.norm(x) * np.linalg.norm(x_qjl))
+    cos_mse = np.dot(x, x_mse) / (np.linalg.norm(x) * np.linalg.norm(x_mse))
+
+    print(f"  4-bit QJL (3+1): cos_sim={cos_qjl:.4f}")
+    print(f"  4-bit pure MSE:  cos_sim={cos_mse:.4f}")
+
+    # Pure MSE with 4 bits should have better cos_sim than 3-bit MSE + 1-bit QJL
+    # (QJL adds noise to individual vectors; its benefit is in unbiased inner products)
+    assert cos_mse > cos_qjl, \
+        f"Pure MSE should have higher cos_sim: {cos_mse:.4f} vs {cos_qjl:.4f}"
+    print("PASS: qjl_vs_pure_mse_same_total_bits")
+
+
 if __name__ == "__main__":
     np.random.seed(42)
     print("=" * 60)

@@ -60,6 +60,7 @@ class TurboQuantConfig:
     total_bits: int = 3       # b: total bits per coordinate (2-7)
     seed: int = 42            # Random seed for rotation and projection
     use_fast_rotation: bool = True  # Use WHT-based rotation (O(d·log d))
+    use_qjl: bool = True      # Enable QJL correction (1 bit). False = pure MSE.
 
     def __post_init__(self):
         assert self.total_bits >= 2, f"total_bits must be >= 2, got {self.total_bits}"
@@ -67,12 +68,14 @@ class TurboQuantConfig:
     @property
     def mse_bits(self) -> int:
         """Bits allocated to MSE stage."""
-        return self.total_bits - 1
+        if self.use_qjl:
+            return self.total_bits - 1
+        return self.total_bits
 
     @property
     def qjl_bits(self) -> int:
-        """Bits allocated to QJL stage (always 1)."""
-        return 1
+        """Bits allocated to QJL stage."""
+        return 1 if self.use_qjl else 0
 
 
 class TurboQuantCompressor:
@@ -95,10 +98,12 @@ class TurboQuantCompressor:
         # Lloyd-Max codebook for MSE stage
         self.codebook = lloyd_max(self.d, config.mse_bits)
 
-        # QJL projection matrix S ∈ ℝ^{d×d}
-        # Use seeded RNG for reproducibility
-        qjl_rng = np.random.default_rng(config.seed + 1000)
-        self.S = qjl_rng.standard_normal((self.d, self.d))
+        # QJL projection matrix S ∈ ℝ^{d×d} (only when QJL enabled)
+        if config.use_qjl:
+            qjl_rng = np.random.default_rng(config.seed + 1000)
+            self.S = qjl_rng.standard_normal((self.d, self.d))
+        else:
+            self.S = None
 
     def _rotate(self, x: np.ndarray) -> np.ndarray:
         """Apply rotation to vector."""
@@ -132,11 +137,9 @@ class TurboQuantCompressor:
         # Stage 1: MSE quantization (PolarQuant)
         x_norm = np.linalg.norm(x)
         if x_norm < 1e-12:
-            # Zero vector: store zeros
             indices = np.zeros(self.d, dtype=np.uint8)
-            qjl_signs = np.ones(self.d)
             mse_packed = pack_mse_indices(indices, self.config.mse_bits)
-            qjl_packed = pack_qjl_bits(qjl_signs)
+            qjl_packed = pack_qjl_bits(np.ones(self.d)) if self.config.use_qjl else np.array([], dtype=np.uint8)
             return CompressedKV(
                 mse_packed=mse_packed,
                 qjl_packed=qjl_packed,
@@ -149,20 +152,21 @@ class TurboQuantCompressor:
         x_hat = x / x_norm                             # Normalize to unit sphere
         y = self._rotate(x_hat)                        # Rotate (coords ~ N(0, 1/d))
         indices = quantize_scalar(y, self.codebook)    # Quantize each coordinate
-        y_hat = dequantize_scalar(indices, self.codebook)
-        x_mse = x_norm * self._rotate_inverse(y_hat)   # Reconstruct with original norm
 
-        # Stage 2: QJL on residual
-        r = x - x_mse                                  # Residual
-        gamma = np.linalg.norm(r)                       # Residual norm
-        if gamma > 1e-12:
-            qjl_signs = np.sign(self.S @ r)             # 1-bit projection
-        else:
-            qjl_signs = np.ones(self.d)                 # No residual
-
-        # Pack into compressed format
         mse_packed = pack_mse_indices(indices, self.config.mse_bits)
-        qjl_packed = pack_qjl_bits(qjl_signs)
+
+        if self.config.use_qjl:
+            # Stage 2: QJL on residual
+            y_hat = dequantize_scalar(indices, self.codebook)
+            x_mse = x_norm * self._rotate_inverse(y_hat)
+            r = x - x_mse
+            gamma = np.linalg.norm(r)
+            qjl_signs = np.sign(self.S @ r) if gamma > 1e-12 else np.ones(self.d)
+            qjl_packed = pack_qjl_bits(qjl_signs)
+        else:
+            # Pure MSE mode — no QJL
+            gamma = 0.0
+            qjl_packed = np.array([], dtype=np.uint8)
 
         return CompressedKV(
             mse_packed=mse_packed,
@@ -183,19 +187,21 @@ class TurboQuantCompressor:
             Reconstructed vector, shape (d,)
         """
         indices = compressed.get_mse_indices()
-        qjl_signs = compressed.get_qjl_signs()
-        gamma = float(compressed.gamma)
         x_norm = float(compressed.x_norm)
 
         # Stage 1: MSE reconstruction (with original norm)
         y_hat = dequantize_scalar(indices, self.codebook)
         x_mse = x_norm * self._rotate_inverse(y_hat)
 
-        # Stage 2: QJL residual reconstruction
-        scale = math.sqrt(math.pi / 2) / self.d
-        x_qjl = scale * gamma * (self.S.T @ qjl_signs)
+        if self.config.use_qjl:
+            # Stage 2: QJL residual reconstruction
+            qjl_signs = compressed.get_qjl_signs()
+            gamma = float(compressed.gamma)
+            scale = math.sqrt(math.pi / 2) / self.d
+            x_qjl = scale * gamma * (self.S.T @ qjl_signs)
+            return x_mse + x_qjl
 
-        return x_mse + x_qjl
+        return x_mse
 
     def inner_product(self, q: np.ndarray, compressed: CompressedKV) -> float:
         """Compute ⟨q, x̃⟩ without full decompression.
@@ -211,8 +217,6 @@ class TurboQuantCompressor:
             Approximate inner product ⟨q, x̃⟩
         """
         indices = compressed.get_mse_indices()
-        qjl_signs = compressed.get_qjl_signs()
-        gamma = float(compressed.gamma)
         x_norm = float(compressed.x_norm)
 
         # MSE component: x_norm · ⟨q, Πᵀỹ⟩ = x_norm · ⟨Πq, ỹ⟩
@@ -220,11 +224,15 @@ class TurboQuantCompressor:
         y_hat = dequantize_scalar(indices, self.codebook)
         ip_mse = x_norm * np.dot(q_rot, y_hat)
 
-        # QJL component: ⟨q, (√(π/2)/d)·γ·Sᵀ·z⟩ = (√(π/2)/d)·γ·⟨Sq, z⟩
-        q_proj = self.S @ q
-        ip_qjl = (math.sqrt(math.pi / 2) / self.d) * gamma * np.dot(q_proj, qjl_signs)
+        if self.config.use_qjl:
+            # QJL component: ⟨q, (√(π/2)/d)·γ·Sᵀ·z⟩ = (√(π/2)/d)·γ·⟨Sq, z⟩
+            qjl_signs = compressed.get_qjl_signs()
+            gamma = float(compressed.gamma)
+            q_proj = self.S @ q
+            ip_qjl = (math.sqrt(math.pi / 2) / self.d) * gamma * np.dot(q_proj, qjl_signs)
+            return ip_mse + ip_qjl
 
-        return ip_mse + ip_qjl
+        return ip_mse
 
     def compress_batch(self, X: np.ndarray) -> list[CompressedKV]:
         """Compress a batch of KV vectors.
