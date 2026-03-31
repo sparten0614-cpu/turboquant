@@ -19,13 +19,24 @@ Two-stage KV cache compression for LLM inference. Independent reproduction of th
 
 Optimal bit-width depends on the model's KV cache norm distribution. Models with large K norms (Qwen: max 196) need more bits than Llama-family models (max ~30).
 
-### llama.cpp (Metal GPU)
+### llama.cpp (Metal GPU, Perplexity)
 
 | Model | KV Config | PPL | vs F16 | Compression |
 |-------|-----------|-----|--------|-------------|
 | TinyLlama 1.1B | TQKV_6 | 25.55 | +0.04% | 2.56x |
 | TinyLlama 1.1B | TQKV_4Q | 25.94 | +1.55% | 2.9x |
+| Llama-2-7B | TQKV_6 | 6.9502 | +0.09% | 2.56x |
+| Llama-3.1-8B | TQKV_6 | 8.9043 | +0.07% | 2.56x |
 | Qwen2.5-3B | TQKV_6 + adaptive | 10.75 | +0.04% | ~2.42x |
+
+### Downstream Task Quality (LongBench v2)
+
+| Model | KV Config | Accuracy | KV Cache | Prediction Match |
+|-------|-----------|----------|----------|-----------------|
+| Llama-3.1-8B Q4_K_M | F16 | 35.0% | ~400 MiB | — |
+| Llama-3.1-8B Q4_K_M | TQKV_6 | **35.0%** | **200 MiB** | 90% identical |
+
+TQKV_6 achieves identical accuracy with 2x KV cache compression. 18/20 predictions match exactly; 2 differences cancel out.
 
 Full results: [benchmarks/results.md](benchmarks/results.md)
 
