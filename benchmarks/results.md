@@ -36,6 +36,15 @@
 | Q4_K_M | TQKV_4Q | 9.0299 | +1.48% | 4-bit + QJL |
 | Q4_K_M | TQKV_4 | 9.0519 | +1.73% | pure 4-bit MSE |
 
+### Ministral-8B-Instruct-2410
+
+| Weight | KV Config | PPL | vs F16 | Notes |
+|--------|-----------|-----|--------|-------|
+| Q4_K_M | F16 baseline | 9.3338 | — | |
+| Q4_K_M | TQKV_6 | 9.3508 | +0.18% | **lossless** |
+
+NIAH 4K: 5/5 = 100% (both F16 and TQKV_6)
+
 ### Qwen2.5-3B
 
 | Weight | KV Config | PPL | vs F16 | Compression | Notes |

@@ -27,6 +27,7 @@ Optimal bit-width depends on the model's KV cache norm distribution. Models with
 | TinyLlama 1.1B | TQKV_4Q | 25.94 | +1.55% | 2.9x |
 | Llama-2-7B | TQKV_6 | 6.9502 | +0.09% | 2.56x |
 | Llama-3.1-8B | TQKV_6 | 8.9043 | +0.07% | 2.56x |
+| Ministral-8B | TQKV_6 | 9.3508 | +0.18% | 2.56x |
 | Qwen2.5-3B | TQKV_6 + adaptive | 10.75 | +0.04% | ~2.42x |
 
 ### Downstream Task Quality (LongBench v2)
