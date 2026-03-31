@@ -124,6 +124,33 @@ Total storage: b bits/coordinate + 2×fp16 scalars (‖x‖, ‖r‖) per vector
 | 50-100 | 5-bit | 3.0x |
 | > 100 | 6-bit | 2.6x |
 
+## Adaptive Layer Selection
+
+Some models have a few layers with extreme Key magnitudes (outlier layers) that dominate quantization error. For example, Qwen2.5-3B Layer 0 and 27 have K_max = 92.8, while normal layers are ~12. Uniform quantization across all layers wastes bits on easy layers while destroying quality on hard ones.
+
+**Solution:** Auto-detect outlier layers (K_max > threshold) and keep them at FP16. All other layers use TurboQuant compression.
+
+```
+Layer sensitivity profiling (one-time):
+  for each layer: compute K_max over calibration data
+  if K_max > threshold → mark as outlier → FP16
+  else → TurboQuant 6-bit
+```
+
+**Results on Qwen2.5-3B (36 layers):**
+
+| Config | Layers skipped | PPL Δ | Extra memory |
+|--------|---------------|-------|-------------|
+| Uniform 6-bit | 0 | +4.4% | 0% |
+| Skip Layer 0 | 1 | +0.1% | ~2.8% |
+| Skip Layer 0+27 | 2 | **+0.04%** | ~5.6% |
+
+Skipping just 2 of 36 layers recovers 99% of the quality loss, at 5.6% extra memory.
+
+**Comparison with prior work:**
+- *KVTuner (ICML 2025)* uses complex multi-objective optimization to search per-layer bit allocations. Our approach is a single threshold check — same effect, simpler implementation.
+- *KVQuant (NeurIPS 2024)* isolates 1% outlier values per vector into sparse format. Our approach operates at layer granularity — coarser but zero per-vector overhead.
+
 ## License
 
 Apache-2.0
