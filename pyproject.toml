@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "turboquant"
+version = "0.1.0"
+description = "Two-stage KV cache compression for LLM inference (ICLR 2026 reproduction)"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+hf = [
+    "torch>=2.0",
+    "transformers>=4.40",
+    "datasets",
+]
+dev = [
+    "pytest>=7.0",
+]
+all = ["turboquant[hf,dev]"]
+
+[tool.setuptools.packages.find]
+include = ["turboquant*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
