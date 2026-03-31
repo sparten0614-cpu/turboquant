@@ -1,5 +1,7 @@
 # TurboQuant
 
+[![CI](https://github.com/sparten0614-cpu/turboquant/actions/workflows/ci.yml/badge.svg)](https://github.com/sparten0614-cpu/turboquant/actions/workflows/ci.yml)
+
 Two-stage KV cache compression for LLM inference. Independent reproduction of the Google Research paper (ICLR 2026).
 
 **Stage 1 (PolarQuant):** Random rotation + Lloyd-Max scalar quantization on the unit sphere.
