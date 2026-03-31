@@ -26,6 +26,16 @@
 | Q4_K_M | TQKV_4 | 7.0247 | +1.16% | pure 4-bit MSE |
 | Q4_K_M | TQKV_4Q | 7.0403 | +1.38% | 4-bit + QJL |
 
+### Llama-3.1-8B-Instruct
+
+| Weight | KV Config | PPL | vs F16 | Notes |
+|--------|-----------|-----|--------|-------|
+| Q4_K_M | F16 baseline | 8.8984 | — | |
+| Q4_K_M | Q8_0 | 8.8956 | -0.03% | 8-bit reference |
+| Q4_K_M | TQKV_6 | 8.9043 | +0.07% | **lossless** |
+| Q4_K_M | TQKV_4Q | 9.0299 | +1.48% | 4-bit + QJL |
+| Q4_K_M | TQKV_4 | 9.0519 | +1.73% | pure 4-bit MSE |
+
 ### Qwen2.5-3B
 
 | Weight | KV Config | PPL | vs F16 | Compression | Notes |
