@@ -36,6 +36,15 @@
 | Qwen2.5-3B (head_dim=128) | 5-bit | 70.28 | +1629% | improved but unusable |
 | Qwen2.5-3B (head_dim=128) | 6-bit | 4.71 | +16.0% | near-lossless |
 
+### Pure MSE vs QJL Mode (Python, head_dim=64, 200 vectors)
+
+| Mode | cos_sim | MSE |
+|------|---------|-----|
+| 6-bit pure MSE (use_qjl=False) | 0.9996 | 0.0055 |
+| 6-bit QJL (5-bit MSE + 1-bit QJL) | 0.9982 | 0.0232 |
+
+Pure MSE wins by +0.14pp cos_sim and 4.25x lower MSE. QJL's 1-bit projection adds noise to individual vectors; its theoretical benefit (unbiased inner products) doesn't offset the MSE bit loss in practice. This matches 阳阳's ggml TQKV_6 (pure MSE) being the production choice.
+
 ## Key Findings
 
 1. **TinyLlama:** TQKV_6 is lossless (+0.04%). TQKV_4Q with QJL correction adds only +1.55%.
@@ -43,6 +52,8 @@
 2. **Qwen2.5-3B:** Uniform TQKV_6 gives +4.4% due to outlier layers (L0, L27 have K_max=92.8 vs normal ~12). **Adaptive Layer Selection** (skip 2/36 layers to F16) recovers to +0.04% at ~2.42x compression.
 
 3. **Bit-width matters for Qwen:** 4-bit is catastrophic (PPL 355), 5-bit unusable (PPL 70), 6-bit works (+16% Python, +4.4% ggml). The correct bit-width depends on model K norm distribution.
+
+4. **Pure MSE > QJL at same bit budget:** At 6-bit, pure MSE (64 centroids) has 4.25x lower reconstruction error than 5-bit MSE + 1-bit QJL. QJL is theoretically unbiased but adds noise per-vector.
 
 4. **Adaptive > Uniform:** For models with outlier layers, skipping 2 layers to F16 costs ~5.6% extra memory but eliminates 99% of quality loss.
 
